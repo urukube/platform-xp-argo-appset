@@ -1,0 +1,40 @@
+---
+name: Release
+
+"on":
+  workflow_run:
+    workflows: ["pre-commit"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    uses: urukube/release-workflow/.github/workflows/version.yml@v1
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+  print-version:
+    name: Print Version
+    needs: release
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print Version
+        env:
+          IS_NEW_RELEASE: ${{ needs.release.outputs.is-new-release }}
+          RELEASE_VERSION: ${{ needs.release.outputs.release-version }}
+        run: |
+          if [ "$IS_NEW_RELEASE" == "true" ]; then
+            echo "Released version: $RELEASE_VERSION"
+          else
+            echo "Dry Run - Next version would be: $RELEASE_VERSION"
+          fi

@@ -1,0 +1,261 @@
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xuargoappsets.gitops.platform.urukube.io
+  labels:
+    provider: kubernetes
+spec:
+  compositeTypeRef:
+    apiVersion: gitops.platform.urukube.io/v1alpha1
+    kind: XUArgoAppSet
+  mode: Pipeline
+  pipeline:
+    # -------------------------------------------------------------------------
+    # Step 1 — Resolve EnvironmentConfigs into the pipeline context.
+    # Merges org-defaults (static) with the BU-specific config selected by
+    # the bu-id label matching spec.parameters.buId from the claim.
+    # -------------------------------------------------------------------------
+    - step: resolve-environment
+      functionRef:
+        name: function-environment-configs
+      input:
+        apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          environmentConfigs:
+            - type: Reference
+              ref:
+                name: org-defaults
+            - type: Selector
+              selector:
+                matchLabels:
+                  - key: bu-id
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: spec.parameters.buId
+
+    # -------------------------------------------------------------------------
+    # Step 2 — ProviderConfig (static, one per composite).
+    # Chains the orchestrator IRSA role into the target account. Identical to
+    # every other platform-xp-* XRD. Not consumed by Step 3 — the resources
+    # generated below are applied in-cluster via the static
+    # kubernetes-incluster ProviderConfig declared in provider.yaml.
+    # -------------------------------------------------------------------------
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: provider-config
+            base:
+              apiVersion: aws.upbound.io/v1beta1
+              kind: ProviderConfig
+              spec:
+                credentials:
+                  source: IRSA
+                assumeRoleChain:
+                  - roleARN: placeholder
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.parameters.awsAccountId
+                toFieldPath: spec.assumeRoleChain[0].roleARN
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "arn:aws:iam::%s:role/urukube-crossplane-role"
+            readinessChecks:
+              - type: None
+
+    # -------------------------------------------------------------------------
+    # Step 3 — Generate the two ArgoCD ApplicationSets as provider-kubernetes
+    # Object resources.
+    #
+    # Both ApplicationSets set spec.goTemplate: true, so the ArgoCD
+    # ApplicationSet controller evaluates {{ .repository }} / {{ .branch }} /
+    # {{ .url }} itself at generate-time. Those expressions must reach the
+    # cluster byte-for-byte — the {{`{{`}} ... {{`}}`}} construct below is a
+    # standard Go-template escape that emits literal "{{" / "}}" so
+    # function-go-templating does not try to resolve them against its own
+    # (unrelated) template context.
+    #
+    # Preview generator: a single scmProvider generator with allBranches:true
+    # plus a branchMatch filter — this is the correct/only ArgoCD construct
+    # for "any branch matching a prefix, across every repo with a topic".
+    # ArgoCD's Git generator has no branch-enumeration capability, so a
+    # Matrix combining it with the SCM Provider generator would be redundant.
+    # -------------------------------------------------------------------------
+    - step: generate-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $params    := .observed.composite.resource.spec.parameters }}
+            {{- $obs       := default (dict) .observed.resources }}
+            {{- $claimName := index .observed.composite.resource.metadata.labels "crossplane.io/claim-name" }}
+
+            {{- $readyMap := dict }}
+            {{- range $crn, $res := $obs }}
+            {{- range $res.resource.status.conditions }}
+            {{- if and (eq .type "Ready") (eq .status "True") }}
+            {{- $readyMap = merge $readyMap (dict $crn "True") }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- $chartPath   := $params.helmChartPath }}
+            {{- $valuesPath  := $params.helmValuesPath }}
+            {{- $valuesRel   := $valuesPath | trimPrefix $chartPath | trimPrefix "/" }}
+            {{- $branchPfx   := $params.branchPrefix }}
+            {{- $argoNs      := $params.argocdNamespace }}
+            {{- $tokenSecret := $params.githubTokenSecretName }}
+            {{- $requeue     := $params.requeueSeconds }}
+            {{- $branchRegex := printf "^%s.*" ($branchPfx | regexQuoteMeta) }}
+            {{- $topicRegex  := printf "^%s$" ($params.repoTopic | regexQuoteMeta) }}
+
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: preview-appset
+                {{- if index $readyMap "preview-appset" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: ApplicationSet
+                  metadata:
+                    name: {{ printf "%s-preview" $claimName }}
+                    namespace: {{ $argoNs }}
+                    labels:
+                      managed-by: platform-xp-argo-appset
+                      claim: {{ $claimName }}
+                      appset-tier: preview
+                  spec:
+                    goTemplate: true
+                    goTemplateOptions: ["missingkey=error"]
+                    generators:
+                      - scmProvider:
+                          requeueAfterSeconds: {{ $requeue }}
+                          github:
+                            organization: {{ $params.githubOrg }}
+                            allBranches: true
+                            tokenRef:
+                              secretName: {{ $tokenSecret }}
+                              key: token
+                          filters:
+                            - labelMatch: {{ $topicRegex | quote }}
+                              branchMatch: {{ $branchRegex | quote }}
+                    template:
+                      metadata:
+                        name: preview-{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}
+                        labels:
+                          managed-by: platform-xp-argo-appset
+                          claim: {{ $claimName }}
+                          appset-tier: preview
+                      spec:
+                        project: default
+                        source:
+                          repoURL: '{{`{{`}} .url {{`}}`}}'
+                          targetRevision: '{{`{{`}} .branch {{`}}`}}'
+                          path: {{ $chartPath }}
+                          helm:
+                            valueFiles:
+                              - {{ $valuesRel }}
+                        destination:
+                          name: {{ $params.devClusterName }}
+                          namespace: '{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+                        syncPolicy:
+                          automated:
+                            prune: true
+                            selfHeal: true
+                          syncOptions:
+                            - CreateNamespace=true
+                          managedNamespaceMetadata:
+                            labels:
+                              preview: "true"
+                              repo: '{{`{{`}} .repository {{`}}`}}'
+                              branch: '{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+              providerConfigRef:
+                name: kubernetes-incluster
+
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: prod-appset
+                {{- if index $readyMap "prod-appset" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: ApplicationSet
+                  metadata:
+                    name: {{ printf "%s-prod" $claimName }}
+                    namespace: {{ $argoNs }}
+                    labels:
+                      managed-by: platform-xp-argo-appset
+                      claim: {{ $claimName }}
+                      appset-tier: prod
+                  spec:
+                    goTemplate: true
+                    goTemplateOptions: ["missingkey=error"]
+                    generators:
+                      - scmProvider:
+                          requeueAfterSeconds: {{ $requeue }}
+                          github:
+                            organization: {{ $params.githubOrg }}
+                            allBranches: false
+                            tokenRef:
+                              secretName: {{ $tokenSecret }}
+                              key: token
+                          filters:
+                            - labelMatch: {{ $topicRegex | quote }}
+                              branchMatch: "^main$"
+                    template:
+                      metadata:
+                        name: prod-{{`{{`}} .repository {{`}}`}}
+                        labels:
+                          managed-by: platform-xp-argo-appset
+                          claim: {{ $claimName }}
+                          appset-tier: prod
+                          env: prod
+                      spec:
+                        project: default
+                        source:
+                          repoURL: '{{`{{`}} .url {{`}}`}}'
+                          targetRevision: main
+                          path: {{ $chartPath }}
+                          helm:
+                            valueFiles:
+                              - {{ $valuesRel }}
+                        destination:
+                          name: {{ $params.prodClusterName }}
+                          namespace: '{{`{{`}} .repository {{`}}`}}'
+                        syncPolicy:
+                          automated:
+                            prune: true
+                            selfHeal: true
+                          syncOptions:
+                            - CreateNamespace=true
+                          managedNamespaceMetadata:
+                            labels:
+                              env: prod
+                              repo: '{{`{{`}} .repository {{`}}`}}'
+              providerConfigRef:
+                name: kubernetes-incluster

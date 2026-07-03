@@ -1,0 +1,102 @@
+---
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xuargoappsets.gitops.platform.urukube.io
+spec:
+  group: gitops.platform.urukube.io
+  names:
+    kind: XUArgoAppSet
+    plural: xuargoappsets
+  claimNames:
+    kind: UArgoAppSet
+    plural: uargoappsets
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - parameters
+              properties:
+                parameters:
+                  type: object
+                  required:
+                    - buId
+                    - awsAccountId
+                    - region
+                    - githubOrg
+                    - repoTopic
+                    - devClusterName
+                    - devClusterServer
+                    - prodClusterName
+                    - prodClusterServer
+                  properties:
+                    buId:
+                      type: string
+                      description: Business Unit identifier — must match an EnvironmentConfig with label bu-id
+                      pattern: "^BU[0-9]{3}$"
+                    awsAccountId:
+                      type: string
+                      description: >-
+                        12-digit AWS account ID. Required by the shared pipeline's
+                        patch-and-transform step, which stamps a per-claim
+                        ProviderConfig for consistency with other platform-xp XRDs.
+                        Not consumed by any resource in this composition — the
+                        generated ApplicationSets are applied in-cluster.
+                      pattern: "^[0-9]{12}$"
+                    region:
+                      type: string
+                      description: AWS region (e.g. us-east-1). Required by the shared pipeline's patch-and-transform step.
+                    githubOrg:
+                      type: string
+                      description: GitHub organisation to scan for repositories.
+                    repoTopic:
+                      type: string
+                      description: GitHub topic that marks repos eligible for preview + prod deployments.
+                    devClusterName:
+                      type: string
+                      description: ArgoCD-registered name of the dev cluster (used as the Application destination).
+                    devClusterServer:
+                      type: string
+                      format: uri
+                      description: Kubernetes API server URL of the dev cluster.
+                    prodClusterName:
+                      type: string
+                      description: ArgoCD-registered name of the prod cluster (used as the Application destination).
+                    prodClusterServer:
+                      type: string
+                      format: uri
+                      description: Kubernetes API server URL of the prod cluster.
+                    helmChartPath:
+                      type: string
+                      default: "helm/"
+                      description: Path to the Helm chart inside each repo.
+                    helmValuesPath:
+                      type: string
+                      default: "helm/values.yaml"
+                      description: Path to the base values file, relative to the repo root.
+                    branchPrefix:
+                      type: string
+                      default: "feat/"
+                      description: Branch prefix that triggers preview deployments.
+                    argocdNamespace:
+                      type: string
+                      default: argocd
+                      description: Namespace where ArgoCD is installed on the orchestrator cluster.
+                    githubTokenSecretName:
+                      type: string
+                      default: argocd-github-token
+                      description: >-
+                        K8s secret in argocdNamespace holding the GitHub token (key: token).
+                        This secret already exists, created by ESO from platform/github/github-token
+                        in Secrets Manager.
+                    requeueSeconds:
+                      type: integer
+                      default: 180
+                      description: How often the SCM generator polls GitHub for branch changes.
