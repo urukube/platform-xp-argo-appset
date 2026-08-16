@@ -87,16 +87,14 @@ Application deleted → namespace + all resources pruned
 
 ## In-cluster provider setup
 
-Unlike the AWS providers used by other `platform-xp-*` repos, `provider-kubernetes` here talks to the orchestrator cluster's own API server — there is no cross-account role to assume. `provider.yaml` grants it a dedicated service account (`provider-kubernetes-incluster`) via `DeploymentRuntimeConfig`, scoped by a `Role`/`RoleBinding` to `create`, `update`, `patch`, `delete`, `get`, `list`, `watch` on `argoproj.io/applicationsets` **and** core `secrets` (for the per-claim GitHub token `Secret`) in the `argocd` namespace only — it cannot touch any other resource in the cluster.
+Unlike the AWS providers used by other `platform-xp-*` repos, `provider-kubernetes` here talks to the orchestrator cluster's own API server — there is no cross-account role to assume. The `Provider`, its `provider-kubernetes-incluster` `DeploymentRuntimeConfig`, and the static `kubernetes-incluster` `ProviderConfig` are declared once in `platform-xp-crossplane-shared/provider-kubernetes.yaml` — shared with `platform-xp-eks`, which uses the identical in-cluster provider for its own purposes. Declaring them in both repos' own `provider.yaml` would make ArgoCD see two Applications independently owning the same objects, producing a permanent `SharedResourceWarning` and flip-flopping `OutOfSync` status (each Application's sync overwrites the other's tracking annotation on the live object) — which is exactly what happened before this was split out.
 
-The `kubernetes-incluster` `ProviderConfig` (also in `provider.yaml`) is static — one per cluster, shared by every `UArgoAppSet` claim (and, by design, with `platform-xp-eks`'s identically-named `provider-kubernetes` install — see that repo's `provider.yaml` comments), referenced directly in `composition.yaml`.
-
-Because `provider-kubernetes`'s `ProviderConfig` depends on CRDs its own `Provider` registers, `provider.yaml` sync-waves the `Provider`/`DeploymentRuntimeConfig`/`Role`/`RoleBinding` ahead of the `ProviderConfig`, and marks the `ProviderConfig` `SkipDryRunOnMissingResource=true` — otherwise ArgoCD's pre-flight validation aborts the entire Application sync on a cold cluster where the CRD isn't registered yet.
+This repo's own `provider.yaml` declares only its scoped `Role`/`RoleBinding`, granting `create`, `update`, `patch`, `delete`, `get`, `list`, `watch` on `argoproj.io/applicationsets` **and** core `secrets` (for the per-claim GitHub token `Secret`) in the `argocd` namespace only, bound to the shared provider's `provider-kubernetes-incluster` service account — it cannot touch any other resource in the cluster. Because the `ProviderConfig` this repo references depends on CRDs the shared `Provider` registers, `platform-xp-crossplane-shared/provider-kubernetes.yaml` sync-waves its `Provider`/`DeploymentRuntimeConfig` ahead of its `ProviderConfig`, and marks the `ProviderConfig` `SkipDryRunOnMissingResource=true` — otherwise ArgoCD's pre-flight validation would abort that Application's entire sync on a cold cluster where the CRD isn't registered yet.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `provider.yaml` | Installs `provider-kubernetes:v1.2.6`; declares the `provider-kubernetes-incluster` `DeploymentRuntimeConfig`, its scoped `Role`/`RoleBinding` on the `argocd` namespace, and the static `kubernetes-incluster` `ProviderConfig` |
+| `provider.yaml` | Declares this repo's scoped `Role`/`RoleBinding` on `argocd` (`applicationsets` + `secrets`), bound to the shared `provider-kubernetes` install in `platform-xp-crossplane-shared` |
 | `xrd.yaml` | Defines the `XUArgoAppSet` / `UArgoAppSet` API and parameter schema |
 | `composition.yaml` | Maps a claim to the GitHub token `Secret` and the single `ApplicationSet` `Object` resource |
