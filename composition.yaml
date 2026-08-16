@@ -139,6 +139,7 @@ spec:
                     goTemplateOptions: ["missingkey=error"]
                     generators:
                       - scmProvider:
+                          cloneProtocol: https
                           requeueAfterSeconds: {{ $requeue }}
                           github:
                             organization: {{ $params.githubOrg }}
