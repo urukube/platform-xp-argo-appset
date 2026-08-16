@@ -67,10 +67,18 @@ roleRef:
 ---
 # Sync-wave 0 (default, explicit here for clarity) — must land strictly after
 # the Provider above (wave -1) so kubernetes.crossplane.io's CRDs are already
-# registered by the time ArgoCD applies this. Bundling Provider + ProviderConfig
-# in one wave fails validation on a cold cluster: the CRD this depends on isn't
-# registered yet, which aborts the ENTIRE Application sync, not just this
-# resource.
+# registered by the time ArgoCD applies this.
+#
+# SkipDryRunOnMissingResource=true is required in addition to the sync-wave:
+# ArgoCD dry-run-validates every resource in the sync up front, across all
+# waves, before applying anything — so on a cold cluster where this CRD isn't
+# registered yet, the dry-run fails and ArgoCD aborts the ENTIRE Application
+# sync before wave -1 (the Provider that would register the CRD) is ever
+# applied. This option skips that pre-flight check for this resource, so the
+# live apply proceeds; it'll still fail on the first attempt (CRD genuinely
+# not registered yet) but succeeds on a later automatic retry once the
+# Provider — created in wave -1, independently of this resource's fate —
+# has finished installing.
 #
 # Static ProviderConfig — one for the whole cluster, referenced by every
 # Object resource this composition generates. InjectedIdentity uses the
@@ -82,6 +90,7 @@ metadata:
   name: kubernetes-incluster
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   credentials:
     source: InjectedIdentity
