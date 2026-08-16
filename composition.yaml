@@ -74,13 +74,43 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- $clusterName := printf "%s-eks" $params.eksFriendlyName }}
-            {{- $chartPath   := $params.helmChartPath }}
-            {{- $valuesPath  := $params.helmValuesPath }}
-            {{- $valuesRel   := $valuesPath | trimPrefix $chartPath | trimPrefix "/" }}
-            {{- $tokenSecret := $params.githubTokenSecretName }}
-            {{- $requeue     := $params.requeueSeconds }}
-            {{- $topicRegex  := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}
+            {{- $clusterName    := printf "%s-eks" $params.eksFriendlyName }}
+            {{- $chartPath      := $params.helmChartPath }}
+            {{- $valuesPath     := $params.helmValuesPath }}
+            {{- $valuesRel      := $valuesPath | trimPrefix $chartPath | trimPrefix "/" }}
+            {{- $tokenSecret    := printf "%s-github-token" $claimName }}
+            {{- $requeue        := $params.requeueSeconds }}
+            {{- $topicRegex     := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}
+
+            ---
+            # Per-claim GitHub token Secret, created from spec.parameters.githubOrgPat.
+            # WARNING: githubOrgPat is stored in plaintext on the claim itself (see
+            # xrd.yaml) — this Secret is just where the SCM generator reads it from,
+            # not a mitigation for that. Never commit a real PAT into a claim file.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: github-token-secret
+                {{- if index $readyMap "github-token-secret" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  type: Opaque
+                  metadata:
+                    name: {{ $tokenSecret }}
+                    namespace: argocd
+                    labels:
+                      managed-by: platform-xp-argo-appset
+                      claim: {{ $claimName }}
+                  stringData:
+                    token: {{ $params.githubOrgPat | quote }}
+              providerConfigRef:
+                name: kubernetes-incluster
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

@@ -33,10 +33,12 @@ ArgoCD's Git generator has no branch-enumeration capability — it only reads fi
 | `spec.parameters.githubOrg` | Yes | — | GitHub organisation to scan for repos |
 | `spec.parameters.repoLabel` | Yes | — | GitHub topic that marks repos eligible for deployment |
 | `spec.parameters.branchPattern` | Yes | — | Regex matched against branch names (e.g. `^main$`, `^release/.*`) — every matching branch gets its own Application |
+| `spec.parameters.githubOrgPat` | Yes | — | GitHub PAT (repo read + read:org scopes) used by the SCM generator. Stored in a `Secret` the composition creates in `argocd` — **not** read from an externally-managed secret. See warning below. |
 | `spec.parameters.helmChartPath` | No | `helm/` | Path to the Helm chart inside each repo |
 | `spec.parameters.helmValuesPath` | No | `helm/values.yaml` | Path to the base values file, relative to the repo root |
-| `spec.parameters.githubTokenSecretName` | No | `argocd-github-token` | K8s secret in the `argocd` namespace holding the GitHub token (key: `token`) — created by ESO from `platform/github/github-token` in Secrets Manager |
 | `spec.parameters.requeueSeconds` | No | `180` | How often the SCM generator polls GitHub for branch changes |
+
+> **`githubOrgPat` is stored in plaintext in `spec.parameters`** — visible via `kubectl get uargoappset -o yaml`, and in git if the claim manifest is committed. Never commit a real PAT into a claim file; apply it via `kubectl apply`/CI secret injection instead, the same way you'd handle any other raw credential. This is a deliberate tradeoff versus the previous design (which referenced an ESO-managed secret and never put the token value in the claim at all) — the composition now owns creating the `Secret` itself rather than depending on an externally-populated one.
 
 ## Example claim
 
@@ -54,6 +56,7 @@ spec:
     githubOrg: urukube
     repoLabel: platform-preview-enabled
     branchPattern: "^main$"
+    githubOrgPat: "<inject-at-apply-time, never commit>"
 ```
 
 This targets the cluster named `bu001-dev-eks`.
@@ -84,7 +87,7 @@ Application deleted → namespace + all resources pruned
 
 ## In-cluster provider setup
 
-Unlike the AWS providers used by other `platform-xp-*` repos, `provider-kubernetes` here talks to the orchestrator cluster's own API server — there is no cross-account role to assume. `provider.yaml` grants it a dedicated service account (`provider-kubernetes-incluster`) via `DeploymentRuntimeConfig`, scoped by a `Role`/`RoleBinding` to `create`, `update`, `patch`, `delete`, `get`, `list`, `watch` on `argoproj.io/applicationsets` in the `argocd` namespace only — it cannot touch any other resource in the cluster.
+Unlike the AWS providers used by other `platform-xp-*` repos, `provider-kubernetes` here talks to the orchestrator cluster's own API server — there is no cross-account role to assume. `provider.yaml` grants it a dedicated service account (`provider-kubernetes-incluster`) via `DeploymentRuntimeConfig`, scoped by a `Role`/`RoleBinding` to `create`, `update`, `patch`, `delete`, `get`, `list`, `watch` on `argoproj.io/applicationsets` **and** core `secrets` (for the per-claim GitHub token `Secret`) in the `argocd` namespace only — it cannot touch any other resource in the cluster.
 
 The `kubernetes-incluster` `ProviderConfig` (also in `provider.yaml`) is static — one per cluster, shared by every `UArgoAppSet` claim (and, by design, with `platform-xp-eks`'s identically-named `provider-kubernetes` install — see that repo's `provider.yaml` comments), referenced directly in `composition.yaml`.
 
@@ -96,4 +99,4 @@ Because `provider-kubernetes`'s `ProviderConfig` depends on CRDs its own `Provid
 |---|---|
 | `provider.yaml` | Installs `provider-kubernetes:v1.2.6`; declares the `provider-kubernetes-incluster` `DeploymentRuntimeConfig`, its scoped `Role`/`RoleBinding` on the `argocd` namespace, and the static `kubernetes-incluster` `ProviderConfig` |
 | `xrd.yaml` | Defines the `XUArgoAppSet` / `UArgoAppSet` API and parameter schema |
-| `composition.yaml` | Maps a claim to the single `ApplicationSet` `Object` resource |
+| `composition.yaml` | Maps a claim to the GitHub token `Secret` and the single `ApplicationSet` `Object` resource |

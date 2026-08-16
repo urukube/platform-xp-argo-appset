@@ -34,7 +34,8 @@ spec:
 # Scoped to the argocd namespace only — this provider must never be able to
 # touch resources outside of it. get/list/watch are required for the
 # provider's observe loop; create/update/patch/delete are what the task
-# requires for managing ApplicationSets.
+# requires for managing ApplicationSets and the per-claim GitHub token Secret
+# the composition creates from spec.parameters.githubOrgPat.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -45,6 +46,9 @@ metadata:
 rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applicationsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
 ---
