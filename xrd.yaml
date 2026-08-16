@@ -28,51 +28,48 @@ spec:
                   type: object
                   required:
                     - buId
+                    - eksFriendlyName
                     - awsAccountId
-                    - region
                     - githubOrg
-                    - repoTopic
-                    - devClusterName
-                    - devClusterServer
-                    - prodClusterName
-                    - prodClusterServer
+                    - repoLabel
+                    - branchPattern
                   properties:
                     buId:
                       type: string
                       description: Business Unit identifier — must match an EnvironmentConfig with label bu-id
                       pattern: "^BU[0-9]{3}$"
+                    eksFriendlyName:
+                      type: string
+                      description: >-
+                        friendlyName of the target UEks claim (platform-xp-eks). The
+                        Application destination is the cluster named
+                        <eksFriendlyName>-eks — which platform-xp-eks registers with
+                        the orchestrator's ArgoCD automatically, so it must already
+                        exist and be Ready before this claim is created.
                     awsAccountId:
                       type: string
                       description: >-
-                        12-digit AWS account ID. Required by the shared pipeline's
-                        patch-and-transform step, which stamps a per-claim
-                        ProviderConfig for consistency with other platform-xp XRDs.
-                        Not consumed by any resource in this composition — the
-                        generated ApplicationSets are applied in-cluster.
+                        12-digit AWS account ID the target cluster lives in. Not
+                        consumed by any resource in this composition — the generated
+                        ApplicationSet is applied in-cluster on the orchestrator —
+                        carried only as a label for cross-referencing.
                       pattern: "^[0-9]{12}$"
-                    region:
-                      type: string
-                      description: AWS region (e.g. us-east-1). Required by the shared pipeline's patch-and-transform step.
                     githubOrg:
                       type: string
                       description: GitHub organisation to scan for repositories.
-                    repoTopic:
+                    repoLabel:
                       type: string
-                      description: GitHub topic that marks repos eligible for preview + prod deployments.
-                    devClusterName:
+                      description: GitHub topic that marks repos eligible for deployment by this ApplicationSet.
+                    branchPattern:
                       type: string
-                      description: ArgoCD-registered name of the dev cluster (used as the Application destination).
-                    devClusterServer:
-                      type: string
-                      format: uri
-                      description: Kubernetes API server URL of the dev cluster.
-                    prodClusterName:
-                      type: string
-                      description: ArgoCD-registered name of the prod cluster (used as the Application destination).
-                    prodClusterServer:
-                      type: string
-                      format: uri
-                      description: Kubernetes API server URL of the prod cluster.
+                      description: >-
+                        Regex matched against branch names (ArgoCD SCM generator
+                        branchMatch). Every matching branch, across every repo
+                        carrying repoLabel, gets its own Application deployed to
+                        <eksFriendlyName>-eks — pruned automatically when the
+                        branch is deleted or stops matching. Examples: "^main$" for
+                        a single fixed branch, "^release/.*" for a release-branch
+                        pattern.
                     helmChartPath:
                       type: string
                       default: "helm/"
@@ -81,10 +78,6 @@ spec:
                       type: string
                       default: "helm/values.yaml"
                       description: Path to the base values file, relative to the repo root.
-                    branchPrefix:
-                      type: string
-                      default: "feat/"
-                      description: Branch prefix that triggers preview deployments.
                     argocdNamespace:
                       type: string
                       default: argocd
