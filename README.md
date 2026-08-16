@@ -11,7 +11,7 @@ A BU submits one `UArgoAppSet` claim per target EKS cluster. The composition cre
 
 ## What gets provisioned
 
-Every `UArgoAppSet` claim creates one `argoproj.io/v1alpha1 ApplicationSet` resource, named after the claim, in `argocdNamespace` (default `argocd`) on the orchestrator cluster itself:
+Every `UArgoAppSet` claim creates one `argoproj.io/v1alpha1 ApplicationSet` resource, named after the claim, in the `argocd` namespace on the orchestrator cluster itself — the only namespace `provider-kubernetes`'s RBAC (`provider.yaml`) permits it to touch:
 
 | Generator | Deploys to | Lifecycle |
 |---|---|---|
@@ -35,8 +35,7 @@ ArgoCD's Git generator has no branch-enumeration capability — it only reads fi
 | `spec.parameters.branchPattern` | Yes | — | Regex matched against branch names (e.g. `^main$`, `^release/.*`) — every matching branch gets its own Application |
 | `spec.parameters.helmChartPath` | No | `helm/` | Path to the Helm chart inside each repo |
 | `spec.parameters.helmValuesPath` | No | `helm/values.yaml` | Path to the base values file, relative to the repo root |
-| `spec.parameters.argocdNamespace` | No | `argocd` | Namespace where ArgoCD is installed |
-| `spec.parameters.githubTokenSecretName` | No | `argocd-github-token` | K8s secret in `argocdNamespace` holding the GitHub token (key: `token`) — created by ESO from `platform/github/github-token` in Secrets Manager |
+| `spec.parameters.githubTokenSecretName` | No | `argocd-github-token` | K8s secret in the `argocd` namespace holding the GitHub token (key: `token`) — created by ESO from `platform/github/github-token` in Secrets Manager |
 | `spec.parameters.requeueSeconds` | No | `180` | How often the SCM generator polls GitHub for branch changes |
 
 ## Example claim

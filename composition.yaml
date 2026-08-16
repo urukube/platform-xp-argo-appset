@@ -78,7 +78,6 @@ spec:
             {{- $chartPath   := $params.helmChartPath }}
             {{- $valuesPath  := $params.helmValuesPath }}
             {{- $valuesRel   := $valuesPath | trimPrefix $chartPath | trimPrefix "/" }}
-            {{- $argoNs      := $params.argocdNamespace }}
             {{- $tokenSecret := $params.githubTokenSecretName }}
             {{- $requeue     := $params.requeueSeconds }}
             {{- $topicRegex  := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}
@@ -99,7 +98,7 @@ spec:
                   kind: ApplicationSet
                   metadata:
                     name: {{ $claimName }}
-                    namespace: {{ $argoNs }}
+                    namespace: argocd
                     labels:
                       managed-by: platform-xp-argo-appset
                       claim: {{ $claimName }}

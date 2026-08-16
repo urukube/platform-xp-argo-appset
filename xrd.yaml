@@ -78,15 +78,11 @@ spec:
                       type: string
                       default: "helm/values.yaml"
                       description: Path to the base values file, relative to the repo root.
-                    argocdNamespace:
-                      type: string
-                      default: argocd
-                      description: Namespace where ArgoCD is installed on the orchestrator cluster.
                     githubTokenSecretName:
                       type: string
                       default: argocd-github-token
                       description: >-
-                        K8s secret in argocdNamespace holding the GitHub token (key: token).
+                        K8s secret in the argocd namespace holding the GitHub token (key: token).
                         This secret already exists, created by ESO from platform/github/github-token
                         in Secrets Manager.
                     requeueSeconds:
