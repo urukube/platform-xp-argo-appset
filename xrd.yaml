@@ -80,6 +80,23 @@ spec:
                         branch is deleted or stops matching. Examples: "^main$" for
                         a single fixed branch, "^release/.*" for a release-branch
                         pattern.
+                    previewBranchPrefixes:
+                      type: array
+                      items:
+                        type: string
+                      default: []
+                      description: >-
+                        Optional list of branch-name prefixes (plain strings, not
+                        regex — e.g. "feat/", "fix/") that additionally deploy
+                        from this repo as preview environments. Every branch
+                        across every repo carrying repoLabel whose name starts
+                        with one of these prefixes gets its own Application,
+                        always using <helmChartPath>/dev/values.yaml regardless
+                        of the environment parameter, deployed to a namespace
+                        prefixed with "preview-" (preview-<repo>-<branch-slug>)
+                        — pruned automatically like any other matched branch.
+                        Leave empty (default) to disable preview-branch
+                        deployments entirely. Example: ["feat/", "fix/"].
                     helmChartPath:
                       type: string
                       default: "helm/"

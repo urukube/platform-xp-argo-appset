@@ -4,6 +4,8 @@ Crossplane XRD package that provides a self-service GitOps deployment golden pat
 
 A BU submits one `UArgoAppSet` claim per target EKS cluster. The composition creates a single ArgoCD `ApplicationSet` on the orchestrator cluster that watches every repo in the GitHub org carrying `repoLabel`, deploys any branch matching `branchPattern` into a per-branch namespace, and targets the cluster named `<eksFriendlyName>-eks` — the same naming convention `platform-xp-eks` uses, which also registers that cluster with ArgoCD automatically. Deleting a branch (or it no longer matching `branchPattern`) prunes its Application and namespace.
 
+Optionally, a claim can also set `previewBranchPrefixes` (e.g. `["feat/", "fix/"]`) to deploy any branch starting with one of those prefixes as a preview environment — always from `dev/values.yaml` regardless of `environment`, into a namespace prefixed `preview-`. This is independent of, and additive to, the `branchPattern` deployment above.
+
 ## Composition pipeline
 
 1. **`resolve-environment`** — merges `org-defaults` with the BU-specific `EnvironmentConfig` selected by `buId`.
@@ -13,15 +15,18 @@ A BU submits one `UArgoAppSet` claim per target EKS cluster. The composition cre
 
 Every `UArgoAppSet` claim creates one `argoproj.io/v1alpha1 ApplicationSet` resource, named after the claim, in the `argocd` namespace on the orchestrator cluster itself — the only namespace `provider-kubernetes`'s RBAC (`provider.yaml`) permits it to touch:
 
-| Generator | Deploys to | Lifecycle |
-|---|---|---|
-| SCM Provider (GitHub), `allBranches: true`, filtered by `repoLabel` topic + `branchMatch: branchPattern` | `<eksFriendlyName>-eks`, namespace `<repo>-<branch-slug>` | Pruned automatically when the branch is deleted or stops matching `branchPattern` |
+| Generator | Deploys to | Values file | Lifecycle |
+|---|---|---|---|
+| SCM Provider (GitHub), `allBranches: true`, filtered by `repoLabel` topic + `branchMatch: branchPattern` | `<eksFriendlyName>-eks`, namespace `<repo>-<branch-slug>` | `<environment>/values.yaml` | Pruned automatically when the branch is deleted or stops matching `branchPattern` |
+| SCM Provider (GitHub), `allBranches: true`, filtered by `repoLabel` topic + `branchMatch` built from `previewBranchPrefixes` — only present when `previewBranchPrefixes` is non-empty | `<eksFriendlyName>-eks`, namespace `preview-<repo>-<branch-slug>` | always `dev/values.yaml` | Pruned automatically when the branch is deleted or stops matching a configured prefix |
 
-Branch slugs are normalised as `{{ .branch | replace "/" "-" | lower }}` — e.g. `feat/add-stripe` → `feat-add-stripe`, giving namespace `payments-api-feat-add-stripe`.
+Branch slugs are normalised as `{{ .branch | replace "/" "-" | lower }}` — e.g. `feat/add-stripe` → `feat-add-stripe`, giving namespace `payments-api-feat-add-stripe` (or `preview-payments-api-feat-add-stripe` for a preview-prefix match).
 
 ### Why a single SCM Provider generator instead of a Matrix
 
 ArgoCD's Git generator has no branch-enumeration capability — it only reads files/directories at a fixed revision. The correct, working construct for "every branch matching a pattern, across every repo with a topic" is the **SCM Provider generator** itself with `allBranches: true` plus a `branchMatch` filter; combining it with a second generator via `matrix` would be redundant. The ApplicationSet uses `spec.goTemplate: true` so `{{ .repository }}` / `{{ .branch }}` / `{{ .url }}` are available in the Application template.
+
+The preview-branch behavior reuses this same construct as a **second, independent** SCM Provider generator (only emitted when `previewBranchPrefixes` is set) rather than a `matrix`/`merge` generator — ArgoCD's top-level `generators` list is already a union, and each entry can carry its own `template` override merged onto the shared one, which is all that's needed to change just the values file and namespace for preview branches.
 
 ## Parameters
 
@@ -34,6 +39,7 @@ ArgoCD's Git generator has no branch-enumeration capability — it only reads fi
 | `spec.parameters.githubOrg` | Yes | — | GitHub organisation to scan for repos |
 | `spec.parameters.repoLabel` | Yes | — | GitHub topic that marks repos eligible for deployment |
 | `spec.parameters.branchPattern` | Yes | — | Regex matched against branch names (e.g. `^main$`, `^release/.*`) — every matching branch gets its own Application |
+| `spec.parameters.previewBranchPrefixes` | No | `[]` | List of plain branch-name prefixes (not regex, e.g. `["feat/", "fix/"]`). Any branch starting with one of these gets its own Application too, always using `dev/values.yaml` (regardless of `environment`), in namespace `preview-<repo>-<branch-slug>`. Empty (default) disables preview-branch deployments |
 | `spec.parameters.githubOrgPat` | Yes | — | GitHub PAT (repo read + read:org scopes) used by the SCM generator. Stored in a `Secret` the composition creates in `argocd` — **not** read from an externally-managed secret. See warning below. |
 | `spec.parameters.helmChartPath` | No | `helm/` | Path to the Helm chart inside each repo |
 | `spec.parameters.requeueSeconds` | No | `180` | How often the SCM generator polls GitHub for branch changes |
@@ -57,6 +63,7 @@ spec:
     githubOrg: urukube
     repoLabel: platform-preview-enabled
     branchPattern: "^main$"
+    previewBranchPrefixes: ["feat/", "fix/"]
     githubOrgPat: "<inject-at-apply-time, never commit>"
 ```
 
@@ -85,6 +92,10 @@ Branch is deleted, or a later push no longer matches branchPattern
   ▼
 Application deleted → namespace + all resources pruned
 ```
+
+Cascading deletion (namespace + everything in it, not just the `Application` object) depends on the generated `Application` carrying the `resources-finalizer.argocd.argoproj.io` finalizer — without it, ArgoCD would delete only the `Application` CR and orphan the live resources. The composition sets this on the shared template, so it applies to every Application from either generator.
+
+If `previewBranchPrefixes` is set, the same flow runs in parallel for any branch starting with one of those prefixes (e.g. `feat/add-stripe`), except: the values file is always `dev/values.yaml` (not `<environment>/values.yaml`), and the namespace is `preview-payments-api-feat-add-stripe`. It's pruned the same way — on branch delete or once it no longer starts with a configured prefix.
 
 ## In-cluster provider setup
 

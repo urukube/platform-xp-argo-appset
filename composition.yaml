@@ -80,6 +80,8 @@ spec:
             {{- $tokenSecret    := printf "%s-github-token" $claimName }}
             {{- $requeue        := $params.requeueSeconds }}
             {{- $topicRegex     := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}
+            {{- $previewPrefixes := default (list) $params.previewBranchPrefixes }}
+            {{- $hasPreview       := gt (len $previewPrefixes) 0 }}
 
             ---
             # Per-claim GitHub token Secret, created from spec.parameters.githubOrgPat.
@@ -149,12 +151,44 @@ spec:
                           filters:
                             - labelMatch: {{ $topicRegex | quote }}
                               branchMatch: {{ $params.branchPattern | quote }}
+                      {{- if $hasPreview }}
+                      - scmProvider:
+                          cloneProtocol: https
+                          requeueAfterSeconds: {{ $requeue }}
+                          github:
+                            organization: {{ $params.githubOrg }}
+                            allBranches: true
+                            tokenRef:
+                              secretName: {{ $tokenSecret }}
+                              key: token
+                          filters:
+                          {{- range $prefix := $previewPrefixes }}
+                            - labelMatch: {{ $topicRegex | quote }}
+                              branchMatch: {{ printf "^%s.*" (regexQuoteMeta $prefix) | quote }}
+                          {{- end }}
+                        template:
+                          spec:
+                            source:
+                              helm:
+                                valueFiles:
+                                  - dev/values.yaml
+                            destination:
+                              namespace: 'preview-{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+                            syncPolicy:
+                              managedNamespaceMetadata:
+                                labels:
+                                  repo: '{{`{{`}} .repository {{`}}`}}'
+                                  branch: '{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+                                  preview: "true"
+                      {{- end }}
                     template:
                       metadata:
                         name: {{ $claimName }}-{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}
                         labels:
                           managed-by: platform-xp-argo-appset
                           claim: {{ $claimName }}
+                        finalizers:
+                          - resources-finalizer.argocd.argoproj.io
                       spec:
                         project: default
                         source:
