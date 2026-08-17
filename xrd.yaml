@@ -29,6 +29,7 @@ spec:
                   required:
                     - buId
                     - eksFriendlyName
+                    - environment
                     - awsAccountId
                     - githubOrg
                     - repoLabel
@@ -47,6 +48,14 @@ spec:
                         <eksFriendlyName>-eks — which platform-xp-eks registers with
                         the orchestrator's ArgoCD automatically, so it must already
                         exist and be Ready before this claim is created.
+                    environment:
+                      type: string
+                      description: >-
+                        Environment name (e.g. dev, staging, prod, or any
+                        custom name). Selects the values file used by the
+                        generated ApplicationSet —
+                        <helmChartPath>/<environment>/values.yaml in each
+                        matched repo.
                     awsAccountId:
                       type: string
                       description: >-
@@ -75,10 +84,6 @@ spec:
                       type: string
                       default: "helm/"
                       description: Path to the Helm chart inside each repo.
-                    helmValuesPath:
-                      type: string
-                      default: "helm/values.yaml"
-                      description: Path to the base values file, relative to the repo root.
                     githubOrgPat:
                       type: string
                       description: >-

@@ -76,8 +76,7 @@ spec:
 
             {{- $clusterName    := printf "%s-eks" $params.eksFriendlyName }}
             {{- $chartPath      := $params.helmChartPath }}
-            {{- $valuesPath     := $params.helmValuesPath }}
-            {{- $valuesRel      := $valuesPath | trimPrefix $chartPath | trimPrefix "/" }}
+            {{- $valuesRel      := printf "%s/values.yaml" $params.environment }}
             {{- $tokenSecret    := printf "%s-github-token" $claimName }}
             {{- $requeue        := $params.requeueSeconds }}
             {{- $topicRegex     := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}

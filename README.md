@@ -29,13 +29,13 @@ ArgoCD's Git generator has no branch-enumeration capability — it only reads fi
 |---|---|---|---|
 | `spec.parameters.buId` | Yes | — | Business Unit ID (e.g. `BU001`) |
 | `spec.parameters.eksFriendlyName` | Yes | — | `friendlyName` of the target `UEks` claim. Application destination is the cluster named `<eksFriendlyName>-eks`, which must already exist and be `Ready` (`platform-xp-eks` registers it with ArgoCD automatically) |
+| `spec.parameters.environment` | Yes | — | Environment name (e.g. `dev`, `staging`, `prod`, or any custom name) — selects the values file at `<helmChartPath>/<environment>/values.yaml` in each matched repo |
 | `spec.parameters.awsAccountId` | Yes | — | 12-digit AWS account ID the target cluster lives in. Not consumed by any resource here — the ApplicationSet is applied in-cluster on the orchestrator — carried only as a label |
 | `spec.parameters.githubOrg` | Yes | — | GitHub organisation to scan for repos |
 | `spec.parameters.repoLabel` | Yes | — | GitHub topic that marks repos eligible for deployment |
 | `spec.parameters.branchPattern` | Yes | — | Regex matched against branch names (e.g. `^main$`, `^release/.*`) — every matching branch gets its own Application |
 | `spec.parameters.githubOrgPat` | Yes | — | GitHub PAT (repo read + read:org scopes) used by the SCM generator. Stored in a `Secret` the composition creates in `argocd` — **not** read from an externally-managed secret. See warning below. |
 | `spec.parameters.helmChartPath` | No | `helm/` | Path to the Helm chart inside each repo |
-| `spec.parameters.helmValuesPath` | No | `helm/values.yaml` | Path to the base values file, relative to the repo root |
 | `spec.parameters.requeueSeconds` | No | `180` | How often the SCM generator polls GitHub for branch changes |
 
 > **`githubOrgPat` is stored in plaintext in `spec.parameters`** — visible via `kubectl get uargoappset -o yaml`, and in git if the claim manifest is committed. Never commit a real PAT into a claim file; apply it via `kubectl apply`/CI secret injection instead, the same way you'd handle any other raw credential. This is a deliberate tradeoff versus the previous design (which referenced an ESO-managed secret and never put the token value in the claim at all) — the composition now owns creating the `Secret` itself rather than depending on an externally-populated one.
@@ -52,6 +52,7 @@ spec:
   parameters:
     buId: BU001
     eksFriendlyName: bu001-dev
+    environment: dev
     awsAccountId: "472506473117"
     githubOrg: urukube
     repoLabel: platform-preview-enabled
@@ -64,7 +65,7 @@ This targets the cluster named `bu001-dev-eks`.
 ## What an app repo needs to participate
 
 1. Add the GitHub topic matching `repoLabel` (e.g. `platform-preview-enabled`) on the repo settings page.
-2. Have a Helm chart at `helmChartPath` (default `helm/`).
+2. Have a Helm chart at `helmChartPath` (default `helm/`), with a values file at `helmChartPath/<environment>/values.yaml` for each environment it supports (e.g. `helm/dev/values.yaml`).
 3. Push to a branch matching `branchPattern`.
 
 ## Full flow
