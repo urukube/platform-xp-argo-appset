@@ -46,15 +46,19 @@ spec:
     # that emits literal "{{" / "}}" so function-go-templating does not try to
     # resolve them against its own (unrelated) template context.
     #
-    # One scmProvider generator covers every branch class (the main branch
-    # plus any number of preview prefixes) via one filter per branchMatch
-    # pattern. The installed ApplicationSet CRD does not allow a `template`
-    # override nested under a plain generator entry (only under matrix/merge),
-    # so per-branch-class overrides (preview namespace, values file) are
-    # expressed once in the shared top-level `template`, selected at ArgoCD
-    # render time via regexMatch against a single alternation regex built
-    # from previewBranchPrefixes. Adding more preview prefixes later — or
-    # more branch types in general — only touches the claim's parameters,
+    # One scmProvider generator covers every branch class (the fixed
+    # branchPattern branch, if set, plus any number of preview prefixes) via
+    # one filter per branchMatch pattern. branchPattern is optional — leaving
+    # it empty drops the fixed-branch filter entirely, so a claim can be
+    # preview-only (e.g. when another claim already owns the fixed-branch
+    # deployment for the same repos, and both would otherwise generate a
+    # duplicate Application). The installed ApplicationSet CRD does not allow
+    # a `template` override nested under a plain generator entry (only under
+    # matrix/merge), so per-branch-class overrides (preview namespace, values
+    # file) are expressed once in the shared top-level `template`, selected
+    # at ArgoCD render time via regexMatch against a single alternation regex
+    # built from previewBranchPrefixes. Adding more preview prefixes later —
+    # or more branch types in general — only touches the claim's parameters,
     # not this template.
     # -------------------------------------------------------------------------
     - step: generate-resources
@@ -179,8 +183,10 @@ spec:
                               secretName: {{ $tokenSecret }}
                               key: token
                           filters:
+                            {{- if $params.branchPattern }}
                             - labelMatch: {{ $topicRegex | quote }}
                               branchMatch: {{ $params.branchPattern | quote }}
+                            {{- end }}
                             {{- range $prefix := $previewPrefixes }}
                             - labelMatch: {{ $topicRegex | quote }}
                               branchMatch: {{ printf "^%s.*" (regexQuoteMeta $prefix) | quote }}

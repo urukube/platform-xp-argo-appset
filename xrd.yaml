@@ -33,7 +33,6 @@ spec:
                     - awsAccountId
                     - githubOrg
                     - repoLabel
-                    - branchPattern
                     - githubOrgPat
                   properties:
                     buId:
@@ -72,6 +71,7 @@ spec:
                       description: GitHub topic that marks repos eligible for deployment by this ApplicationSet.
                     branchPattern:
                       type: string
+                      default: ""
                       description: >-
                         Regex matched against branch names (ArgoCD SCM generator
                         branchMatch). Every matching branch, across every repo
@@ -79,7 +79,11 @@ spec:
                         <eksFriendlyName>-eks — pruned automatically when the
                         branch is deleted or stops matching. Examples: "^main$" for
                         a single fixed branch, "^release/.*" for a release-branch
-                        pattern.
+                        pattern. Leave empty (default) to disable this generator
+                        entirely — e.g. when a claim should only deploy
+                        previewBranchPrefixes branches, with another claim owning
+                        the fixed-branch deployment. At least one of
+                        branchPattern/previewBranchPrefixes must be non-empty.
                     previewBranchPrefixes:
                       type: array
                       items:
