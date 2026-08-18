@@ -46,11 +46,16 @@ spec:
     # that emits literal "{{" / "}}" so function-go-templating does not try to
     # resolve them against its own (unrelated) template context.
     #
-    # A single scmProvider generator with allBranches:true plus a branchMatch
-    # filter is the correct/only ArgoCD construct for "every branch matching a
-    # pattern, across every repo with a topic" — ArgoCD's Git generator has no
-    # branch-enumeration capability, so a Matrix combining it with the SCM
-    # Provider generator would be redundant.
+    # One scmProvider generator covers every branch class (the main branch
+    # plus any number of preview prefixes) via one filter per branchMatch
+    # pattern. The installed ApplicationSet CRD does not allow a `template`
+    # override nested under a plain generator entry (only under matrix/merge),
+    # so per-branch-class overrides (preview namespace, values file) are
+    # expressed once in the shared top-level `template`, selected at ArgoCD
+    # render time via regexMatch against a single alternation regex built
+    # from previewBranchPrefixes. Adding more preview prefixes later — or
+    # more branch types in general — only touches the claim's parameters,
+    # not this template.
     # -------------------------------------------------------------------------
     - step: generate-resources
       functionRef:
@@ -82,6 +87,31 @@ spec:
             {{- $topicRegex     := printf "^%s$" ($params.repoLabel | regexQuoteMeta) }}
             {{- $previewPrefixes := default (list) $params.previewBranchPrefixes }}
             {{- $hasPreview       := gt (len $previewPrefixes) 0 }}
+
+            {{- /* Union every preview branch prefix into one alternation regex, e.g.
+                   previewBranchPrefixes: [feat/, hotfix/] -> "^(feat/|hotfix/).*"
+                   Adding more branch-type prefixes later needs no template changes. */}}
+            {{- $quoted := list }}
+            {{- range $p := $previewPrefixes }}
+            {{- $quoted = append $quoted (regexQuoteMeta $p) }}
+            {{- end }}
+            {{- $previewRegex := printf "^(%s).*" (join "|" $quoted) }}
+
+            {{- /* ArgoCD-side (render-time) template fragments, evaluated per generated
+                   branch by the ApplicationSet controller. Crossplane only substitutes
+                   $previewRegex/$previewNamespace/$mainNamespace into the text below at
+                   compose time - the {{ }} in these fragments stay literal for Argo. */}}
+            {{- $mainNamespace    := `{{ .repository }}-{{ .branch | replace "/" "-" | lower }}` }}
+            {{- $previewNamespace := `preview-{{ .repository }}-{{ .branch | replace "/" "-" | lower }}` }}
+            {{- $namespaceExpr    := $mainNamespace }}
+            {{- $valuesExpr       := $valuesRel }}
+            {{- $previewLabelExpr := "false" }}
+            {{- if $hasPreview }}
+            {{- $ifPreview        := printf "{{- if regexMatch %q .branch -}}" $previewRegex }}
+            {{- $namespaceExpr    = printf "%s%s{{- else -}}%s{{- end -}}" $ifPreview $previewNamespace $mainNamespace }}
+            {{- $valuesExpr       = printf "%sdev/values.yaml{{- else -}}%s{{- end -}}" $ifPreview $valuesRel }}
+            {{- $previewLabelExpr = printf "%strue{{- else -}}false{{- end -}}" $ifPreview }}
+            {{- end }}
 
             ---
             # Per-claim GitHub token Secret, created from spec.parameters.githubOrgPat.
@@ -151,36 +181,10 @@ spec:
                           filters:
                             - labelMatch: {{ $topicRegex | quote }}
                               branchMatch: {{ $params.branchPattern | quote }}
-                      {{- if $hasPreview }}
-                      - scmProvider:
-                          cloneProtocol: https
-                          requeueAfterSeconds: {{ $requeue }}
-                          github:
-                            organization: {{ $params.githubOrg }}
-                            allBranches: true
-                            tokenRef:
-                              secretName: {{ $tokenSecret }}
-                              key: token
-                          filters:
-                          {{- range $prefix := $previewPrefixes }}
+                            {{- range $prefix := $previewPrefixes }}
                             - labelMatch: {{ $topicRegex | quote }}
                               branchMatch: {{ printf "^%s.*" (regexQuoteMeta $prefix) | quote }}
-                          {{- end }}
-                        template:
-                          spec:
-                            source:
-                              helm:
-                                valueFiles:
-                                  - dev/values.yaml
-                            destination:
-                              namespace: 'preview-{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
-                            syncPolicy:
-                              managedNamespaceMetadata:
-                                labels:
-                                  repo: '{{`{{`}} .repository {{`}}`}}'
-                                  branch: '{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
-                                  preview: "true"
-                      {{- end }}
+                            {{- end }}
                     template:
                       metadata:
                         name: {{ $claimName }}-{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}
@@ -197,10 +201,10 @@ spec:
                           path: {{ $chartPath }}
                           helm:
                             valueFiles:
-                              - {{ $valuesRel }}
+                              - '{{ $valuesExpr }}'
                         destination:
                           name: {{ $clusterName }}
-                          namespace: '{{`{{`}} .repository {{`}}`}}-{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+                          namespace: '{{ $namespaceExpr }}'
                         syncPolicy:
                           automated:
                             prune: true
@@ -211,5 +215,6 @@ spec:
                             labels:
                               repo: '{{`{{`}} .repository {{`}}`}}'
                               branch: '{{`{{`}} .branch | replace "/" "-" | lower {{`}}`}}'
+                              preview: '{{ $previewLabelExpr }}'
               providerConfigRef:
                 name: kubernetes-incluster
